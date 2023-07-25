@@ -9,6 +9,9 @@ import numpy as np
 import pandas as pd
 from napari.utils import colormaps
 
+import cv2
+from qtpy import QtGui
+
 
 def unsorted_unique(array: Sequence) -> np.ndarray:
     """Return the unsorted unique elements of an array."""
@@ -65,6 +68,30 @@ def guarantee_multiindex_rows(df):
 def build_color_cycle(n_colors: int, colormap: Optional[str] = "viridis") -> np.ndarray:
     cmap = colormaps.ensure_colormap(colormap)
     return cmap.map(np.linspace(0, 1, n_colors))
+
+
+def frame2pixmap(frame: np.ndarray) -> QtGui.QPixmap:
+    """
+    Converts a frame (from cv2) into a QPixmap
+
+    Parameters
+    ----------
+    frame : ndarray
+        The ndarray containing the image with shape (height, width, colors)
+
+    Returns
+    -------
+    QPixmap
+        the pixel map conversion of the provided frame
+    """
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    h, w, ch = frame.shape
+    bytes_per_line = ch * w
+
+    image = QtGui.QImage(frame.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
+
+    return QtGui.QPixmap.fromImage(image)
 
 
 class DLCHeader:
@@ -163,3 +190,78 @@ class CycleEnum(Enum, metaclass=CycleEnumMeta):
 
     def __str__(self):
         return self.value
+
+
+class Limits:
+    """
+    A helper class to define minimum and max values in a range.
+
+    Forces the min to be less than max
+    """
+
+    def __init__(self, min_: int | float, max_: int | float):
+        self._min = self._max = 0
+        self.set(min_, max_)
+
+    def set(self, min_: int | float, max_: int | float):
+        min_ = int(min_)
+        max_ = int(max_)
+
+        if min_ > max_:
+            raise ValueError("min_ cannot be greater than max_")
+
+        self._min = min_
+        self._max = max_
+
+    @property
+    def min(self) -> int:
+        return self._min
+
+    @min.setter
+    def min(self, new_min: int | float) -> None:
+        if new_min > self._max:
+            raise ValueError("min cannot be larger than max")
+
+        self._min = int(new_min)
+
+    @property
+    def max(self) -> int:
+        return self._max
+
+    @max.setter
+    def max(self, new_max: int | float) -> None:
+        if new_max < self._min:
+            raise ValueError("max cannot be less than min")
+
+        self._max = int(new_max)
+
+    def normalize(self, min_: int | float | Limits, max_: int | float | None = None):
+        if isinstance(min_, Limits):
+            max_ = min_.max
+            min_ = min_.min
+        elif max_ is None:  # min_ is not Limits but max_ is None
+            raise ValueError("If min_ is not a Limits object, max_ must be provided")
+        elif min_ > max_:
+            raise ValueError("min_ cannot be larger than max_!")
+
+        if self._max < max_:
+            self.max = max_
+        if self._min > min_:
+            self.min = min_
+
+    def contains(self, num: int | float | Limits) -> bool:
+        if isinstance(num, Limits):
+            return self.min <= num.min and num.max <= self.max
+
+        return self.min <= num <= self.max
+
+    def __str__(self) -> str:
+        return f"[{self.min}, {self.max}]"
+
+    def __getitem__(self, item: int | slice):
+        if item == 0:
+            return self._min
+        elif item == 1:
+            return self._max
+
+        raise IndexError(f"{item} is not a valid index for {self.__class__.__name__} (must be either 0 or 1)")

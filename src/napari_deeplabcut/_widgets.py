@@ -8,6 +8,9 @@ import pandas as pd
 from pathlib import Path
 from types import MethodType
 from typing import Optional, Sequence, Union
+import misc
+import napari_deeplabcut._inputs as inputs
+import cv2
 
 import numpy as np
 from napari._qt.widgets.qt_welcome import QtWelcomeLabel
@@ -18,7 +21,7 @@ from napari.layers.utils.layer_utils import _features_to_properties
 from napari.utils.events import Event
 from napari.utils.history import get_save_history, update_save_history
 from qtpy.QtCore import Qt, QTimer, Signal, QSize, QPoint, QSettings
-from qtpy.QtGui import QPainter, QIcon, QAction
+from qtpy.QtGui import QPainter, QIcon, QAction, QPixmap, QResizeEvent
 from qtpy.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -38,6 +41,8 @@ from qtpy.QtWidgets import (
     QStyleOption,
     QVBoxLayout,
     QWidget,
+    QSpinBox,
+    QSlider
 )
 
 ICON_FOLDER = os.path.join(os.path.dirname(__file__), "assets")
@@ -1087,3 +1092,154 @@ class ColorSchemeDisplay(QScrollArea):
         self.scheme_dict = {}
         for i in reversed(range(self._layout.count())):
             self._layout.itemAt(i).widget().deleteLater()
+
+
+class PixmapLabel(QLabel):
+    """
+    Python version of https://stackoverflow.com/a/22618496
+    Possibly modified from https://stackoverflow.com/a/62353328
+    """
+
+    def __init__(self, parent: QWidget, min_width=1, min_height=1):
+        super().__init__(parent)
+        self._pm: Optional[QPixmap] = None
+        self.setMinimumSize(min_width, min_height)
+        self.setScaledContents(False)
+
+    def setPixmap(self, pm: QPixmap) -> None:
+        self._pm = pm
+        super().setPixmap(self.scaledPixmap())
+
+    def resizeEvent(self, e: QResizeEvent) -> None:
+        if self._pm is not None:
+            super().setPixmap(self.scaledPixmap())
+
+    def heightForWidth(self, width: int) -> int:
+        if self._pm is None:
+            return self.height()
+        return int((self._pm.height() * width) / self._pm.width())
+
+    def sizeHint(self) -> QSize:
+        width = self.width()
+        return QSize(width, self.heightForWidth(width))
+
+    def scaledPixmap(self) -> QPixmap:
+        return self._pm.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+
+class VideoSkimmer(QWidget):
+
+    # TODO: add option for wrapping
+    supported_video_ext = ('.mp4', '.avi')
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+
+        # Attributes
+
+        self._video_path: Optional[str] = None
+        self._video: Optional[cv2.VideoCapture] = None
+        self._current_frame: int = -1
+        self._total_frames: int = 0
+        self._frame_range: misc.Limits = misc.Limits(0, 0)
+        self._frame_preview = PixmapLabel(self, 256, 144)
+
+        # GUI Elements
+
+        self._options = QWidget(self)
+
+        self._frame_slider = inputs.AdjustableRangeSlider(Qt.Orientation.Horizontal, self._options)
+        self._frame_slider.slider.valueChanged.connect(self._on_frame_slider_change)
+
+        self._frame_spinbox = QSpinBox(self._options)
+        self._frame_spinbox.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self._frame_spinbox.valueChanged.connect(self._on_frame_spinbox_change)
+
+        # Layout
+
+        self._layout = QVBoxLayout()
+        self._layout.addWidget(self._frame_preview)
+        self._layout.addWidget(self._options)
+        self.setLayout(self._layout)
+
+        self._options_layout = QHBoxLayout()
+        self._options_layout.addWidget(self._frame_spinbox)
+        self._options_layout.addWidget(self._frame_slider)
+        self._options.setLayout(self._options_layout)
+
+    def _on_frame_slider_change(self):
+        new_val = self._frame_slider.slider.value()
+
+        self._frame_spinbox.setValue(new_val)
+        self.set_frame(new_val)
+
+    def _on_frame_spinbox_change(self):
+        new_val = self._frame_spinbox.value()
+
+        self._frame_slider.slider.setValue(new_val)
+        self.set_frame(new_val)
+
+    def _update_preview(self):
+        self._video.set(cv2.CAP_PROP_POS_FRAMES, self._current_frame)
+        ret, frame = self._video.read()
+        self._frame_preview.setPixmap(misc.frame2pixmap(frame))
+
+    def set_frame_range(self, start: Union[int, float, None], stop: Union[int, float, None] = None):
+
+        if isinstance(start, float):
+            start = int(start)
+        elif start is None:
+            start = 0
+
+        if isinstance(stop, float):
+            stop = int(stop)
+        elif stop is None:
+            stop = self._total_frames - 1
+
+        self._frame_range.set(start, stop)
+
+        self._frame_slider.set_limits(start, stop, True)
+        self._frame_spinbox.setRange(start, stop)
+
+    def has_video(self) -> bool:
+        return self._video_path is not None and self._video is not None
+
+    def set_video(self, video_path: str) -> None:
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"'{video_path}' does not exist!")
+
+        if not os.path.splitext(video_path)[-1].lower() in self.supported_video_ext:
+            raise ValueError(f"Video is not of a known supported type. "
+                             f"Current supported types are: {self.supported_video_ext}")
+
+        self._video_path = video_path
+        self._video = cv2.VideoCapture(video_path)
+        self._total_frames = int(self._video.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.set_frame_range(0, self._total_frames - 1)
+        self.set_frame(0)
+
+    def in_frame_range(self, frame_num: int) -> bool:
+        return self._frame_range.contains(frame_num)
+
+    def set_frame(self, frame_num: int) -> None:
+        if not self.has_video():
+            return
+
+        if frame_num < self._frame_range.min:
+            frame_num = self._frame_range.min
+        elif frame_num > self._frame_range.max:
+            frame_num = self._frame_range.max
+
+        self._current_frame = frame_num
+        self._update_preview()
+
+    def next_frame(self) -> None:
+        if not self.in_frame_range(self._current_frame + 1):
+            return
+        self.set_frame(self._current_frame + 1)
+
+    def prev_frame(self) -> None:
+        if not self.in_frame_range(self._current_frame - 1):
+            return
+        self.set_frame(self._current_frame - 1)
+
