@@ -4,13 +4,16 @@ from copy import deepcopy
 from datetime import datetime
 from functools import partial, cached_property
 from math import ceil, log10
+
+import napari.qt
 import pandas as pd
 from pathlib import Path
 from types import MethodType
 from typing import Optional, Sequence, Union
-import misc
+import napari_deeplabcut.misc as misc
 import napari_deeplabcut._inputs as inputs
 import cv2
+import yaml
 
 import numpy as np
 from napari._qt.widgets.qt_welcome import QtWelcomeLabel
@@ -369,6 +372,20 @@ class KeypointControls(QWidget):
 
         self._radio_group = self._form_mode_radio_buttons()
 
+        self._view_context_btn = QPushButton("Show Context", parent=self)
+        self._view_context_btn.pressed.connect(self._open_video_context)
+
+        self._frame_nums = []
+        self._current_frame_index = 0
+        self._video_context = VideoSkimmer()
+        self._video_context.setStyleSheet(napari.qt.get_current_stylesheet())
+        self._video_context.hide()
+
+        # called whenever the next frame is selected
+        self.viewer.dims.events.current_step.connect(self._update_video_context_to_current_frame)
+
+        self._layout.addWidget(self._view_context_btn)
+
         self._display = ColorSchemeDisplay(parent=self)
         self._color_scheme_display = self._form_color_scheme_display(self.viewer)
         self._view_scheme_cb.toggled.connect(self._show_color_scheme)
@@ -410,6 +427,48 @@ class KeypointControls(QWidget):
         if (ind := index) != 0:
             self.viewer.layers.move_selected(ind, 0)
             self.viewer.layers.select_next()  # Auto-select the Points layer
+
+    def _update_video_context_to_current_frame(self, event):
+        self._current_frame_index = event.value[0]
+
+        if not self._video_context.isHidden():
+            self._align_video_context()
+
+    def _align_video_context(self):
+        frame_num = self._frame_nums[self._current_frame_index]
+
+        self._video_context.set_frame_range(frame_num - 30, frame_num + 30)
+        self._video_context.set_frame(frame_num)
+
+    def _open_video_context(self):
+
+        if not self._video_context.isHidden():
+            # context viewer already shown; end execution early
+            return
+
+        root = Path(self._images_meta['root'])
+        video_path: Optional[str] = None
+
+        # try to find and load source video for frames
+        if len(root.parents) >= 2 and (config_path := root.parents[1].joinpath("/config.yaml")).exists():
+            with open(config_path, 'r') as file:
+                config = yaml.safe_load(file)
+
+            video_path = next((path for path in config["video_sets"] if root.stem in path), None)
+
+        # have user manually select source video
+        if not video_path:
+            dialog = QFileDialog()
+            dialog.setViewMode(QFileDialog.Detail)
+            dialog.setDirectory(str(root))
+
+            if dialog.exec():
+                video_path = dialog.selectedFiles()[0]
+
+        if video_path and os.path.exists(video_path):
+            self._video_context.set_video(video_path)
+            self._video_context.show()
+            self._align_video_context()
 
     def _show_color_scheme(self):
         show = self._view_scheme_cb.isChecked()
@@ -602,6 +661,9 @@ class KeypointControls(QWidget):
             paths = layer.metadata.get("paths")
             if paths is None:  # Then it's a video file
                 self.video_widget.setVisible(True)
+            else:
+                self._frame_nums = [int(Path(p).stem.removeprefix("img")) for p in paths]
+
             # Store the metadata and pass them on to the other layers
             self._images_meta.update(
                 {
@@ -1141,7 +1203,6 @@ class VideoSkimmer(QWidget):
         self._video: Optional[cv2.VideoCapture] = None
         self._current_frame: int = -1
         self._total_frames: int = 0
-        self._frame_range: misc.Limits = misc.Limits(0, 0)
         self._frame_preview = PixmapLabel(self, 256, 144)
 
         # GUI Elements
@@ -1188,17 +1249,15 @@ class VideoSkimmer(QWidget):
 
         if isinstance(start, float):
             start = int(start)
-        elif start is None:
+        elif start is None or start < 0:
             start = 0
 
         if isinstance(stop, float):
             stop = int(stop)
-        elif stop is None:
+        elif stop is None or stop >= self._total_frames:
             stop = self._total_frames - 1
 
-        self._frame_range.set(start, stop)
-
-        self._frame_slider.set_limits(start, stop, True)
+        self._frame_slider.set_limits(start, stop)
         self._frame_spinbox.setRange(start, stop)
 
     def has_video(self) -> bool:
@@ -1215,22 +1274,25 @@ class VideoSkimmer(QWidget):
         self._video_path = video_path
         self._video = cv2.VideoCapture(video_path)
         self._total_frames = int(self._video.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        self._frame_slider.set_absolutes(0, self._total_frames - 1)
         self.set_frame_range(0, self._total_frames - 1)
         self.set_frame(0)
 
     def in_frame_range(self, frame_num: int) -> bool:
-        return self._frame_range.contains(frame_num)
+        return self._frame_slider.limits.contains(frame_num)
 
     def set_frame(self, frame_num: int) -> None:
         if not self.has_video():
             return
 
-        if frame_num < self._frame_range.min:
-            frame_num = self._frame_range.min
-        elif frame_num > self._frame_range.max:
-            frame_num = self._frame_range.max
+        if frame_num < self._frame_slider.limits.min:
+            frame_num = self._frame_slider.limits.min
+        elif frame_num > self._frame_slider.limits.max:
+            frame_num = self._frame_slider.limits.max
 
         self._current_frame = frame_num
+        self._frame_spinbox.setValue(frame_num)
         self._update_preview()
 
     def next_frame(self) -> None:

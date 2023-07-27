@@ -235,6 +235,9 @@ class Limits:
 
         self._max = int(new_max)
 
+    def copy(self) -> Limits:
+        return self.__class__(self._min, self._max)
+
     def normalize(self, min_: int | float | Limits, max_: int | float | None = None):
         if isinstance(min_, Limits):
             max_ = min_.max

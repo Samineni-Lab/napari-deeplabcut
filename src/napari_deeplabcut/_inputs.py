@@ -107,6 +107,14 @@ class AdjustableRangeSlider(Widgets.QWidget):
         self.range_max_line_edit.setText(str(self._limits.max))
         self.slider.setRange(self._limits.min, self._limits.max)
 
+    @property
+    def limits(self):
+        return self._limits.copy()  # returning a copy because user shouldn't be able to directly modify limits
+
+    @property
+    def absolutes(self):
+        return self._absolute_limits.copy()
+
     def set_limits(self, min_: int, max_: int, stretch_absolutes: bool = False):
         if stretch_absolutes:
             self._limits.set(min_, max_)
