@@ -204,6 +204,14 @@ class Limits:
         self.set(min_, max_)
 
     def set(self, min_: int | float, max_: int | float):
+        """
+        Sets the min and max of the Limits. floats are cast into ints
+
+        Raises
+        ------
+        ValueError
+            if int(min_) < int(max_)
+        """
         min_ = int(min_)
         max_ = int(max_)
 
@@ -219,10 +227,12 @@ class Limits:
 
     @min.setter
     def min(self, new_min: int | float) -> None:
+        new_min = int(new_min)
+
         if new_min > self._max:
             raise ValueError("min cannot be larger than max")
 
-        self._min = int(new_min)
+        self._min = new_min
 
     @property
     def max(self) -> int:
@@ -230,15 +240,40 @@ class Limits:
 
     @max.setter
     def max(self, new_max: int | float) -> None:
+        new_max = int(new_max)
+
         if new_max < self._min:
             raise ValueError("max cannot be less than min")
 
         self._max = int(new_max)
 
     def copy(self) -> Limits:
+        """Creates a copy of this Limits"""
         return self.__class__(self._min, self._max)
 
     def normalize(self, min_: int | float | Limits, max_: int | float | None = None):
+        """
+        Normalizes this Limits object to the provided min and max. In essence, this method forces this object to
+        contain the provided min and max with the least change possible. Programmatically, this looks like:
+
+        If self.min > min_, then self.min = min_.
+        If self.max < max_, then self.max = max_.
+
+        Parameters
+        ----------
+        min_ : int or float or Limits
+            The minimum value for this Limits object to be normalized to. If min_ is a Limits object, then min_ and max_
+            take the values of the Limits object's min and max.
+        max_ : int or float, optional unless min_ is not Limits
+            The maximum value for this Limits object to be normalized to. Must be provided if min_ is not a Limits
+            object.
+
+        Raises
+        ------
+        ValueError
+            If min_ is not a Limits object and max_ is not provided or min_ > max_
+        """
+
         if isinstance(min_, Limits):
             max_ = min_.max
             min_ = min_.min
@@ -253,6 +288,14 @@ class Limits:
             self.min = min_
 
     def contains(self, num: int | float | Limits) -> bool:
+        """
+        Checks if the provided number or Limits fit within this Limits object's min and max.
+
+        Returns
+        -------
+        bool
+            True if num fits within the interval [self.min, self.max]
+        """
         if isinstance(num, Limits):
             return self.min <= num.min and num.max <= self.max
 
