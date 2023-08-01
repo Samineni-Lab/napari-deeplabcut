@@ -434,10 +434,18 @@ class KeypointControls(QWidget):
         if not self._video_context.isHidden():
             self._align_video_context()
 
-    def _align_video_context(self):
+    def _align_video_context(self, window_radius: int = 30):
         frame_num = self._frame_nums[self._current_frame_index]
 
-        self._video_context.set_frame_range(frame_num - 30, frame_num + 30)
+        start = frame_num - window_radius
+        stop = frame_num + window_radius
+
+        if start < 0:
+            start = 0
+        if stop > self._video_context.get_largest_frame():
+            stop = self._video_context.get_largest_frame()
+
+        self._video_context.set_frame_range(start, stop)
         self._video_context.set_frame(frame_num)
 
     def _open_video_context(self):
@@ -450,23 +458,37 @@ class KeypointControls(QWidget):
         video_path: Optional[str] = None
 
         # try to find and load source video for frames
-        if len(root.parents) >= 2 and (config_path := root.parents[1].joinpath("/config.yaml")).exists():
+        if len(root.parents) >= 2 and (config_path := root.parents[1].joinpath("config.yaml")).exists():
             with open(config_path, 'r') as file:
                 config = yaml.safe_load(file)
 
             video_path = next((path for path in config["video_sets"] if root.stem in path), None)
 
+            # make video path None again if a path was found in the config file, but nothing exists there
+            # in this case, we want to pull up the file explorer, since the video may have just moved
+            if video_path and not os.path.exists(video_path):
+                video_path = None
+
         # have user manually select source video
         if not video_path:
             dialog = QFileDialog()
             dialog.setViewMode(QFileDialog.Detail)
+            dialog.setFileMode(QFileDialog.ExistingFile)
             dialog.setDirectory(str(root))
+            dialog.setNameFilter(f"Videos ({' '.join('*' + e for e in self._video_context.supported_video_ext)})")
 
             if dialog.exec():
                 video_path = dialog.selectedFiles()[0]
 
+        # only try to open the video if a video was selected and the selected video exists
         if video_path and os.path.exists(video_path):
             self._video_context.set_video(video_path)
+
+            # if the highest frame num in the labeled data is larger than the highest frame num in the selected video,
+            # then the video likely doesn't match the labeled data
+            if self._frame_nums[-1] > self._video_context.get_largest_frame():
+                return
+
             self._video_context.show()
             self._align_video_context()
 
@@ -662,7 +684,7 @@ class KeypointControls(QWidget):
             if paths is None:  # Then it's a video file
                 self.video_widget.setVisible(True)
             else:
-                self._frame_nums = [int(Path(p).stem.removeprefix("img")) for p in paths]
+                self._frame_nums = [int(Path(p).stem[3:]) for p in paths]
 
             # Store the metadata and pass them on to the other layers
             self._images_meta.update(
@@ -1276,7 +1298,7 @@ class VideoSkimmer(QWidget):
         if isinstance(stop, float):
             stop = int(stop)
         elif stop is None or stop >= self._total_frames:
-            stop = self._total_frames - 1
+            stop = self.get_largest_frame()
 
         self._frame_slider.set_limits(start, stop)
         self._frame_spinbox.setRange(start, stop)
@@ -1321,7 +1343,7 @@ class VideoSkimmer(QWidget):
         self._total_frames = int(self._video.get(cv2.CAP_PROP_FRAME_COUNT))
 
         # set ranges and limits to [0, index of last frame]
-        self._frame_slider.set_absolutes(0, self._total_frames - 1)
+        self._frame_slider.set_absolutes(0, self.get_largest_frame())
         self.set_frame_range()
         self.set_frame(0)
 
@@ -1397,3 +1419,5 @@ class VideoSkimmer(QWidget):
             return
         self.set_frame(self._current_frame - 1, autoupdate_preview=autoupdate_preview)
 
+    def get_largest_frame(self) -> int:
+        return self._total_frames - 1
