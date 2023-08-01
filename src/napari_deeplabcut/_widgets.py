@@ -1234,6 +1234,7 @@ class VideoSkimmer(QWidget):
         # frame slider is a slider (with an adjustable range) that controls the current frame shown
         self._frame_slider = inputs.AdjustableRangeSlider(Qt.Orientation.Horizontal, self._options)
         self._frame_slider.slider.valueChanged.connect(self._on_frame_slider_change)
+        self._frame_slider.rangeChanged.connect(self._on_range_change)
 
         # frame spinbox shows the currently shown frame and allows it to be changed with the keyboard
         self._frame_spinbox = QSpinBox(self._options)
@@ -1251,6 +1252,9 @@ class VideoSkimmer(QWidget):
         self._options_layout.addWidget(self._frame_spinbox)
         self._options_layout.addWidget(self._frame_slider)
         self._options.setLayout(self._options_layout)
+
+    def _on_range_change(self):
+        self._frame_spinbox.setRange(self._frame_slider.limits.min, self._frame_slider.limits.max)
 
     def _on_frame_slider_change(self):
         """Ensures frame_slider and frame_spinbox hold the same value."""

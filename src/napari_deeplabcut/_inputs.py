@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import qtpy.QtWidgets as Widgets
-from qtpy.QtCore import Qt
+from qtpy.QtCore import Qt, Signal
 import qtpy.QtGui as Gui
 
 from napari_deeplabcut import misc
@@ -45,6 +45,8 @@ class PyIntValidator(Gui.QValidator):
 
 
 class AdjustableRangeSlider(Widgets.QWidget):
+
+    rangeChanged = Signal()
 
     def __init__(self, orientation: Qt.Orientation, parent: Widgets.QWidget):
         super().__init__(parent)
@@ -93,6 +95,7 @@ class AdjustableRangeSlider(Widgets.QWidget):
         # if the function makes it here, new_min is valid -- update limits and slider
         self._limits.min = new_min
         self.slider.setRange(self._limits.min, self._limits.max)
+        self.rangeChanged.emit()
 
     def _max_edited(self):
         """Ensures new maximum value fits within absolute limits and is larger than the current min."""
@@ -106,6 +109,7 @@ class AdjustableRangeSlider(Widgets.QWidget):
         # if the function makes it here, new_max is valid -- update limits and slider
         self._limits.max = new_max
         self.slider.setRange(self._limits.min, self._limits.max)
+        self.rangeChanged.emit()
 
     def _update_widgets(self):
         """Makes GUI elements congruent with programmatic values"""
@@ -122,7 +126,7 @@ class AdjustableRangeSlider(Widgets.QWidget):
     def absolutes(self):
         return self._absolute_limits.copy()
 
-    def set_limits(self, min_: int, max_: int, stretch_absolutes: bool = False):
+    def set_limits(self, min_: int, max_: int, stretch_absolutes: bool = False, emit: bool = True):
         """
         Sets the limits of the slider.
 
@@ -134,6 +138,8 @@ class AdjustableRangeSlider(Widgets.QWidget):
             the maximum value of the slider
         stretch_absolutes : bool, default False
             If True, absolute limits will be stretched (changed) to fit limits provided to this method.
+        emit : bool
+            Whether to emit the rangeChanged signal on the calling of this function
 
         Raises
         ------
@@ -152,9 +158,12 @@ class AdjustableRangeSlider(Widgets.QWidget):
             raise ValueError(f"When {stretch_absolutes=}, new limits [{min_}, {max_}] must fit within absolute limits "
                              f"{self._absolute_limits}")
 
+        if emit:
+            self.rangeChanged.emit()
+
         self._update_widgets()
 
-    def set_absolutes(self, min_: int, max_: int):
+    def set_absolutes(self, min_: int, max_: int, emit: bool = True):
         """
         Sets the absolute limits that self.limits must fit within. self.limits is automatically normalized to the new
         absolutes to guarantee it fits within them.
@@ -165,9 +174,12 @@ class AdjustableRangeSlider(Widgets.QWidget):
             The new minimum value of self.absolutes
         max_ : int
             The new maximum value of self.absolutes
+        emit : bool
+            Whether to emit the rangeChanged signal on the calling of this function
 
         """
         self._absolute_limits.set(min_, max_)
         self._limits.normalize(self._absolute_limits)
 
+        self.rangeChanged.emit()
         self._update_widgets()
