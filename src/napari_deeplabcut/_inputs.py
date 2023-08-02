@@ -53,9 +53,9 @@ class AdjustableRangeSlider(Widgets.QWidget):
 
         # Attributes
 
-        # absolute limits are bounds for what limits can be, since the user can adjust limits manually
-        self._limits: misc.Limits = misc.Limits(0, 0)  # the bounds of the slider's range
-        self._absolute_limits: misc.Limits = misc.Limits(0, 0)  # absolute bounds for slider's range
+        # absolute range are bounds for what range can be, since the user can adjust range manually
+        self._range: misc.InclusiveInterval = misc.InclusiveInterval(0, 0)  # the bounds of the slider's range
+        self._range_bounds: misc.InclusiveInterval = misc.InclusiveInterval(0, 0)  # absolute bounds for slider's range
 
         # Widgets
 
@@ -84,51 +84,52 @@ class AdjustableRangeSlider(Widgets.QWidget):
         self.setLayout(self._layout)
 
     def _min_edited(self):
-        """Ensures new maximum value fits within absolute limits and is smaller than the current max."""
+        """Ensures new maximum value fits within range bounds and is smaller than the current max."""
         new_min = int(self.range_min_line_edit.text())
 
         # checks if new_min is invalid
-        if new_min > self._limits.max or not self._absolute_limits.contains(new_min):
-            self.range_min_line_edit.setText(str(self._limits.min))  # reset to previous value
+        if new_min > self._range.max or not self._range_bounds.contains(new_min):
+            self.range_min_line_edit.setText(str(self._range.min))  # reset to previous value
             return
 
-        # if the function makes it here, new_min is valid -- update limits and slider
-        self._limits.min = new_min
-        self.slider.setRange(self._limits.min, self._limits.max)
+        # if the function makes it here, new_min is valid -- update range and slider
+        self._range.min = new_min
+        self.slider.setRange(self._range.min, self._range.max)
         self.rangeChanged.emit()
 
     def _max_edited(self):
-        """Ensures new maximum value fits within absolute limits and is larger than the current min."""
+        """Ensures new maximum value fits within range bounds and is larger than the current min."""
         new_max = int(self.range_max_line_edit.text())
 
         # checks if new_max is invalid
-        if new_max < self._limits.min or not self._absolute_limits.contains(new_max):
-            self.range_max_line_edit.setText(str(self._limits.max))
+        if new_max < self._range.min or not self._range_bounds.contains(new_max):
+            self.range_max_line_edit.setText(str(self._range.max))
             return
 
-        # if the function makes it here, new_max is valid -- update limits and slider
-        self._limits.max = new_max
-        self.slider.setRange(self._limits.min, self._limits.max)
+        # if the function makes it here, new_max is valid -- update range and slider
+        self._range.max = new_max
+        self.slider.setRange(self._range.min, self._range.max)
         self.rangeChanged.emit()
 
     def _update_widgets(self):
         """Makes GUI elements congruent with programmatic values"""
 
-        self.range_min_line_edit.setText(str(self._limits.min))
-        self.range_max_line_edit.setText(str(self._limits.max))
-        self.slider.setRange(self._limits.min, self._limits.max)
+        self.range_min_line_edit.setText(str(self._range.min))
+        self.range_max_line_edit.setText(str(self._range.max))
+        self.slider.setRange(self._range.min, self._range.max)
 
     @property
-    def limits(self):
-        return self._limits.copy()  # returning a copy because user shouldn't be able to directly modify limits
+    def range(self):
+        # returning a copy because user shouldn't be able to modify range outside provided method
+        return self._range.copy()
 
     @property
-    def absolutes(self):
-        return self._absolute_limits.copy()
+    def range_bounds(self):
+        return self._range_bounds.copy()
 
-    def set_limits(self, min_: int, max_: int, stretch_absolutes: bool = False, emit: bool = True):
+    def set_range(self, min_: int, max_: int | None = None, *, stretch_bounds: bool = False, emit: bool = True):
         """
-        Sets the limits of the slider.
+        Sets the range of the slider.
 
         Parameters
         ----------
@@ -136,50 +137,66 @@ class AdjustableRangeSlider(Widgets.QWidget):
             The minimum value of the slider
         max_ : int
             the maximum value of the slider
-        stretch_absolutes : bool, default False
-            If True, absolute limits will be stretched (changed) to fit limits provided to this method.
+        stretch_bounds : bool, default False
+            If True, the range boundaries will be stretched (changed) to fit range provided to this method.
         emit : bool
             Whether to emit the rangeChanged signal on the calling of this function
 
         Raises
         ------
         ValueError
-            If provided min_ or max_ does not fit within self.absolutes and stretch_absolutes=False
+            If provided min_ or max_ does not fit within self.max_range and stretch_absolutes=False
 
         """
 
-        if stretch_absolutes:
-            self._limits.set(min_, max_)  # since we're stretching absolutes, provided min_ and max_ will be limits
-            self._absolute_limits.normalize(self._limits)  # change absolutes to fit self._limits
-        elif self._absolute_limits.contains(misc.Limits(min_, max_)):
-            # not stretching absolutes, so must check if new max_ and min_ fits
-            self._limits.set(min_, max_)
-        else:  # not stretching absolutes and new limits do not fit within the absolute limits
-            raise ValueError(f"When {stretch_absolutes=}, new limits [{min_}, {max_}] must fit within absolute limits "
-                             f"{self._absolute_limits}")
+        # raises a ValueError if min_ > max_
+        new_range = misc.InclusiveInterval(min_, max_)
+
+        if stretch_bounds:
+            self._range = new_range # since we're stretching range_bounds, no special requirements for new_range
+            self._range_bounds.normalize(self._range)  # change range_bounds to fit self._range
+        elif self._range_bounds.contains(new_range):  # check if new max_ and min_ fits
+            self._range = new_range
+        else:  # not stretching range_bounds and new range do not fit within the absolute range
+            raise ValueError(f"When {stretch_bounds=}, new range [{min_}, {max_}] must fit within absolute range "
+                             f"{self._range_bounds}")
 
         if emit:
             self.rangeChanged.emit()
 
         self._update_widgets()
 
-    def set_absolutes(self, min_: int, max_: int, emit: bool = True):
+    def set_range_bounds(self, min_: int, max_: int, *, emit: bool = True):
         """
-        Sets the absolute limits that self.limits must fit within. self.limits is automatically normalized to the new
-        absolutes to guarantee it fits within them.
+        Sets the absolute range that self.range must fit within. self.range is automatically normalized to the new
+        range_bounds to guarantee it fits within them.
 
         Parameters
         ----------
         min_ : int
-            The new minimum value of self.absolutes
+            The new minimum value of self.range_bounds
         max_ : int
-            The new maximum value of self.absolutes
+            The new maximum value of self.range_bounds
         emit : bool
-            Whether to emit the rangeChanged signal on the calling of this function
+            Whether to emit the rangeChanged signal on the calling of this function (if the range is changed)
+
+        Raises
+        ------
+        ValueError
+            If min_ > max_
 
         """
-        self._absolute_limits.set(min_, max_)
-        self._limits.normalize(self._absolute_limits)
 
-        self.rangeChanged.emit()
+        # will raise the error in the case stated above
+        new_bounds = misc.InclusiveInterval(min_, max_)
+
+        if new_bounds == self._range_bounds:
+            return
+
+        self._range_bounds = new_bounds
+        self._range.normalize(self._range_bounds)
+
+        if emit:
+            self.rangeChanged.emit()
+
         self._update_widgets()

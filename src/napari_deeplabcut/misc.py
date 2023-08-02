@@ -226,7 +226,7 @@ class CycleEnum(Enum, metaclass=CycleEnumMeta):
         return self.value
 
 
-class Limits:
+class InclusiveInterval:
     """
     A helper class to define minimum and max values in a range.
 
@@ -239,7 +239,7 @@ class Limits:
 
     def set(self, min_: int | float, max_: int | float):
         """
-        Sets the min and max of the Limits. floats are cast into ints
+        Sets the min and max of the InclusiveInterval. floats are cast into ints
 
         Raises
         ------
@@ -281,11 +281,13 @@ class Limits:
 
         self._max = int(new_max)
 
-    def copy(self) -> Limits:
-        """Creates a copy of this Limits"""
+    def copy(self) -> InclusiveInterval:
+        """Creates a copy of this InclusiveInterval"""
         return self.__class__(self._min, self._max)
 
-    def normalize(self, min_: int | float | Limits, max_: int | float | None = None):
+    __copy__ = __deepcopy__ = copy
+
+    def normalize(self, min_: int | float | InclusiveInterval, max_: int | float | None = None):
         """
         Normalizes this Limits object to the provided min and max. In essence, this method forces this object to
         contain the provided min and max with the least change possible. Programmatically, this looks like:
@@ -295,7 +297,7 @@ class Limits:
 
         Parameters
         ----------
-        min_ : int or float or Limits
+        min_ : int or float or InclusiveInterval
             The minimum value for this Limits object to be normalized to. If min_ is a Limits object, then min_ and max_
             take the values of the Limits object's min and max.
         max_ : int or float, optional unless min_ is not Limits
@@ -308,11 +310,11 @@ class Limits:
             If min_ is not a Limits object and max_ is not provided or min_ > max_
         """
 
-        if isinstance(min_, Limits):
+        if isinstance(min_, InclusiveInterval):
             max_ = min_.max
             min_ = min_.min
-        elif max_ is None:  # min_ is not Limits but max_ is None
-            raise ValueError("If min_ is not a Limits object, max_ must be provided")
+        elif max_ is None:  # min_ is not InclusiveInterval but max_ is None
+            raise ValueError("If min_ is not a InclusiveInterval object, max_ must be provided")
         elif min_ > max_:
             raise ValueError("min_ cannot be larger than max_!")
 
@@ -321,19 +323,25 @@ class Limits:
         if self._min > min_:
             self.min = min_
 
-    def contains(self, num: int | float | Limits) -> bool:
+    def contains(self, num: int | float | InclusiveInterval) -> bool:
         """
-        Checks if the provided number or Limits fit within this Limits object's min and max.
+        Checks if the provided number or InclusiveInterval fit within this InclusiveInterval object's min and max.
 
         Returns
         -------
         bool
             True if num fits within the interval [self.min, self.max]
         """
-        if isinstance(num, Limits):
+        if isinstance(num, InclusiveInterval):
             return self.min <= num.min and num.max <= self.max
 
         return self.min <= num <= self.max
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, self.__class__):
+            return self._min == other._min and self._max == other._max
+
+        return False
 
     def __str__(self) -> str:
         return f"[{self.min}, {self.max}]"

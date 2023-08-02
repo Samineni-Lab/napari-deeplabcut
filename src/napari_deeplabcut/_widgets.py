@@ -382,7 +382,7 @@ class KeypointControls(QWidget):
         self._video_context.hide()
 
         # called whenever the next frame is selected
-        self.viewer.dims.events.current_step.connect(self._update_video_context_to_current_frame)
+        self.viewer.dims.events.current_step.connect(self._sync_context_frame)
 
         self._layout.addWidget(self._view_context_btn)
 
@@ -428,7 +428,7 @@ class KeypointControls(QWidget):
             self.viewer.layers.move_selected(ind, 0)
             self.viewer.layers.select_next()  # Auto-select the Points layer
 
-    def _update_video_context_to_current_frame(self, event):
+    def _sync_context_frame(self, event):
         self._current_frame_index = event.value[0]
 
         if not self._video_context.isHidden():
@@ -1214,6 +1214,7 @@ class PixmapLabel(QLabel):
 class VideoSkimmer(QWidget):
     """A widget for skimming through videos"""
 
+    # list of known video types that work with the video skimmer
     supported_video_ext = ('.mp4', '.avi')
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -1234,7 +1235,7 @@ class VideoSkimmer(QWidget):
         # frame slider is a slider (with an adjustable range) that controls the current frame shown
         self._frame_slider = inputs.AdjustableRangeSlider(Qt.Orientation.Horizontal, self._options)
         self._frame_slider.slider.valueChanged.connect(self._on_frame_slider_change)
-        self._frame_slider.rangeChanged.connect(self._on_range_change)
+        self._frame_slider.rangeChanged.connect(self._sync_spinbox)
 
         # frame spinbox shows the currently shown frame and allows it to be changed with the keyboard
         self._frame_spinbox = QSpinBox(self._options)
@@ -1253,8 +1254,9 @@ class VideoSkimmer(QWidget):
         self._options_layout.addWidget(self._frame_slider)
         self._options.setLayout(self._options_layout)
 
-    def _on_range_change(self):
-        self._frame_spinbox.setRange(self._frame_slider.limits.min, self._frame_slider.limits.max)
+    def _sync_spinbox(self):
+        """Syncronizes the frame spinbox with the range of the AdjustableRangeSlider"""
+        self._frame_spinbox.setRange(self._frame_slider.range.min, self._frame_slider.range.max)
 
     def _on_frame_slider_change(self):
         """Ensures frame_slider and frame_spinbox hold the same value."""
@@ -1276,6 +1278,10 @@ class VideoSkimmer(QWidget):
         ret, frame = self._video.read()
         self._frame_preview.setPixmap(misc.frame2pixmap(frame))
 
+    @classmethod
+    def is_supported_file(cls, path: str) -> bool:
+        return os.path.splitext(path)[-1].lower() in cls.supported_video_ext
+
     def set_frame_range(self, start: Union[int, float, None] = None, stop: Union[int, float, None] = None):
         """
         Sets the frame index range that the user can access.
@@ -1294,18 +1300,11 @@ class VideoSkimmer(QWidget):
             A value error will be raised if start > stop or start < 0 or stop > the number of frames in the video
         """
 
-        if isinstance(start, float):
-            start = int(start)
-        elif start is None or start < 0:
-            start = 0
+        # creating a InclusiveInterval object will throw a ValueError if provided min > provided max
+        new_range = misc.InclusiveInterval(start or 0, stop or self.get_largest_frame())
 
-        if isinstance(stop, float):
-            stop = int(stop)
-        elif stop is None or stop >= self._total_frames:
-            stop = self.get_largest_frame()
-
-        self._frame_slider.set_limits(start, stop)
-        self._frame_spinbox.setRange(start, stop)
+        self._frame_slider.set_range(*new_range)
+        self._frame_spinbox.setRange(*new_range)
 
     def has_video(self) -> bool:
         """
@@ -1338,22 +1337,31 @@ class VideoSkimmer(QWidget):
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"'{video_path}' does not exist!")
 
-        if not os.path.splitext(video_path)[-1].lower() in self.supported_video_ext:
+        if not self.is_supported_file(video_path):
             raise ValueError(f"Video is not of a known supported type. "
                              f"Current supported types are: {self.supported_video_ext}")
 
         self._video_path = video_path
         self._video = cv2.VideoCapture(video_path)
+
         self._total_frames = int(self._video.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        # set ranges and limits to [0, index of last frame]
-        self._frame_slider.set_absolutes(0, self.get_largest_frame())
+        # if total frames == 0 here, then the selected video probably doesn't support cv2.CAP_PROP_FRAME_COUNT
+        # thus, we must manually count the number of frames (which is really slow)
+        if self._total_frames == 0:
+            ret, = self._video.read()
+            while ret:
+                self._total_frames += 1
+                ret, = self._video.read()
+
+        # set ranges and range to [0, index of last frame]
+        self._frame_slider.set_range_bounds(0, self.get_largest_frame())
         self.set_frame_range()
         self.set_frame(0)
 
     def in_frame_range(self, frame_num: int) -> bool:
         """Checks if frame_num fits within the current frame_range"""
-        return self._frame_slider.limits.contains(frame_num)
+        return self._frame_slider.range.contains(frame_num)
 
     def set_frame(self, frame_num: int, assume_closest: bool = True, autoupdate_preview: bool = True) -> None:
         """
@@ -1381,13 +1389,13 @@ class VideoSkimmer(QWidget):
             return
 
         if assume_closest:
-            if frame_num < self._frame_slider.limits.min:
-                frame_num = self._frame_slider.limits.min
-            elif frame_num > self._frame_slider.limits.max:
-                frame_num = self._frame_slider.limits.max
-        elif not self._frame_slider.limits.contains(frame_num):
+            if frame_num < self._frame_slider.range.min:
+                frame_num = self._frame_slider.range.min
+            elif frame_num > self._frame_slider.range.max:
+                frame_num = self._frame_slider.range.max
+        elif not self._frame_slider.range.contains(frame_num):
             raise ValueError(f"When {assume_closest=}, provided frame_num must be within the inclusive range "
-                             f"{self._frame_slider.limits}.")
+                             f"{self._frame_slider.range}.")
 
         self._current_frame = frame_num
         self._frame_spinbox.setValue(frame_num)
