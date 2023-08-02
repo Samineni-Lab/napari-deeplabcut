@@ -24,7 +24,7 @@ from napari.layers.utils.layer_utils import _features_to_properties
 from napari.utils.events import Event
 from napari.utils.history import get_save_history, update_save_history
 from qtpy.QtCore import Qt, QTimer, Signal, QSize, QPoint, QSettings
-from qtpy.QtGui import QPainter, QIcon, QAction, QPixmap, QResizeEvent
+from qtpy.QtGui import QPainter, QIcon, QAction, QPixmap, QWheelEvent
 from qtpy.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -45,7 +45,9 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QSpinBox,
-    QSlider
+    QSlider,
+    QGraphicsView,
+    QGraphicsScene
 )
 
 ICON_FOLDER = os.path.join(os.path.dirname(__file__), "assets")
@@ -1178,37 +1180,29 @@ class ColorSchemeDisplay(QScrollArea):
             self._layout.itemAt(i).widget().deleteLater()
 
 
-class PixmapLabel(QLabel):
-    """
-    Python version of https://stackoverflow.com/a/22618496
-    Possibly modified from https://stackoverflow.com/a/62353328
-    """
+class ZoomView(QGraphicsView):
 
-    def __init__(self, parent: QWidget, min_width=1, min_height=1):
+    def __init__(self, parent: QWidget):
         super().__init__(parent)
-        self._pm: Optional[QPixmap] = None
-        self.setMinimumSize(min_width, min_height)
-        self.setScaledContents(False)
+        self._scene = QGraphicsScene(self)
+        self.setScene(self._scene)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
 
-    def setPixmap(self, pm: QPixmap) -> None:
-        self._pm = pm
-        super().setPixmap(self.scaledPixmap())
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        """Converted to Python from https://stackoverflow.com/a/41688654"""
+        if event.modifiers() == Qt.ControlModifier:  # ctrl+scroll zooms
+            anchor = self.transformationAnchor()
+            self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+            angle = event.angleDelta().y()
+            factor = 1.1 if angle > 0 else 0.9
+            self.scale(factor, factor)
+            self.setTransformationAnchor(anchor)
+        else:
+            super().wheelEvent(event)
 
-    def resizeEvent(self, e: QResizeEvent) -> None:
-        if self._pm is not None:
-            super().setPixmap(self.scaledPixmap())
-
-    def heightForWidth(self, width: int) -> int:
-        if self._pm is None:
-            return self.height()
-        return int((self._pm.height() * width) / self._pm.width())
-
-    def sizeHint(self) -> QSize:
-        width = self.width()
-        return QSize(width, self.heightForWidth(width))
-
-    def scaledPixmap(self) -> QPixmap:
-        return self._pm.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    def set_pixmap(self, pm: QPixmap) -> None:
+        self._scene.clear()
+        self._scene.addPixmap(pm)
 
 
 class VideoSkimmer(QWidget):
@@ -1226,7 +1220,9 @@ class VideoSkimmer(QWidget):
         self._video: Optional[cv2.VideoCapture] = None
         self._current_frame: int = -1
         self._total_frames: int = 0
-        self._frame_preview = PixmapLabel(self, 256, 144)
+
+        self._frame_preview = ZoomView(self)
+        self._frame_preview.setMinimumSize(256, 144)
 
         # GUI Elements
 
@@ -1255,7 +1251,7 @@ class VideoSkimmer(QWidget):
         self._options.setLayout(self._options_layout)
 
     def _sync_spinbox(self):
-        """Syncronizes the frame spinbox with the range of the AdjustableRangeSlider"""
+        """Synchronizes the frame spinbox with the range of the AdjustableRangeSlider"""
         self._frame_spinbox.setRange(self._frame_slider.range.min, self._frame_slider.range.max)
 
     def _on_frame_slider_change(self):
@@ -1276,7 +1272,7 @@ class VideoSkimmer(QWidget):
         """Sets the Pixmap of the frame_preview label to the currently selected frame."""
         self._video.set(cv2.CAP_PROP_POS_FRAMES, self._current_frame)
         ret, frame = self._video.read()
-        self._frame_preview.setPixmap(misc.frame2pixmap(frame))
+        self._frame_preview.set_pixmap(misc.frame2pixmap(frame))
 
     @classmethod
     def is_supported_file(cls, path: str) -> bool:
